@@ -18,6 +18,9 @@ main = do
   let [(program, [])] = readP_to_S parseProgram $ C8.unpack fileContent
       device = createDevice program
   putStrLn $ show program
-  mapM IOText.putStr $ evalState runDevice device
+  let (ret, dev) = runState runDevice device
+  mapM IOText.putStr ret
+  putStrLn ""
+  putStrLn $ show dev
   return ()
 

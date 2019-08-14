@@ -179,8 +179,7 @@ executeInstruction PUSHFALSE = do
 executeInstruction (HALT) = do
   dev <- get
   put $ dev { devicePC = Nothing }
-  return $ Just $ Text.pack $ show dev
-  -- return Nothing
+  return Nothing
 
 executeInstruction (LIST c) = do
   dev <- get
