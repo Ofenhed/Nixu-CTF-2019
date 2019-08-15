@@ -1,8 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Runner where
 
--- PUSHI\|SUB\|PRINT\|PUSHSTR\|PUSHUNIT
-
 import Types
 
 import Control.Monad.State
@@ -11,7 +9,7 @@ import Data.Int (Int64)
 import Data.List (head, tail, splitAt, elemIndex)
 import Data.Char (chr)
 import Data.Bits (xor)
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Vector ((!), (//))
 
 import qualified Data.Vector as V
@@ -42,10 +40,10 @@ createDevice program = LisbyDevice program (Just (0, 0)) [] [0] (V.singleton Map
 
 incPC :: Monad m => StateT LisbyDevice m ()
 incPC = do
-  dev <- get
-  case devicePC dev of
-    Just (tape, row) -> put $ dev { devicePC = Just (tape, row + 1) }
-    Nothing -> return ()
+  modify $ \dev ->
+    case devicePC dev of
+      Just (tape, row) -> dev { devicePC = Just (tape, row + 1) }
+      Nothing -> dev
 
 getInstruction :: LisbyDevice -> Maybe TapeOpcode
 getInstruction dev = let Just (tape, row) = devicePC dev
@@ -60,76 +58,75 @@ executeInstruction :: Monad m => TapeOpcode -> StateT LisbyDevice m (Maybe Text.
 executeInstruction PRINT = do
   dev <- get
   let (val:rest) = deviceValueStack dev
+      printer val = case val of
+        ValueStackItemInt i -> Just $ Text.pack $ [chr $ fromIntegral i]
+        ValueStackItemString i -> Just $ (tableEntries $ programStringTable $ deviceProgram dev) !! i
+        ValueStackItemFloat f -> Just $ Text.pack $ show f
+        ValueStackList l -> Just $ Text.pack $ show l
+        ValueStackItemClosure i _ -> Just $ Text.pack $ "Closure address " ++ show i
   put $ dev { deviceValueStack = rest }
   incPC
-  return $ case val of
-    ValueStackItemInt i -> Just $ Text.pack $ [chr $ fromIntegral i]
-    ValueStackItemString i -> Just $ (tableEntries $ programStringTable $ deviceProgram dev) !! i
-    ValueStackItemFloat f -> Just $ Text.pack $ show f
-    ValueStackList l -> Just $ Text.pack $ show l
-    ValueStackItemClosure i _ -> Just $ Text.pack $ "Closure address " ++ show i
+  return $ printer val
 
 executeInstruction (PUSHI v) = do
-  dev <- get
-  put $ dev { deviceValueStack = ((ValueStackItemInt v):deviceValueStack dev) }
+  modify $ \dev -> dev { deviceValueStack = ((ValueStackItemInt v):deviceValueStack dev) }
   incPC
   return Nothing
 
 executeInstruction SUB = do
-  dev <- get
-  let val1:val2:rest = deviceValueStack dev
-      doOp (ValueStackItemInt i) (ValueStackItemInt i2) = return $ ValueStackItemInt $ i - i2
-      doOp (ValueStackItemFloat f) (ValueStackItemFloat f2) = return $ ValueStackItemFloat $ f - f2
-      doOp _ _ = error "Can't sub different value types" 
-  subbed <- doOp val1 val2
-  put $ dev { deviceValueStack = subbed:rest }
+  modify $ \dev -> do
+    let val1:val2:rest = deviceValueStack dev
+        doOp (ValueStackItemInt i) (ValueStackItemInt i2) = ValueStackItemInt $ i - i2
+        doOp (ValueStackItemFloat f) (ValueStackItemFloat f2) = ValueStackItemFloat $ f - f2
+        doOp _ _ = error "Can't sub different value types" 
+        subbed = doOp val1 val2
+      in dev { deviceValueStack = subbed:rest }
   incPC
   return Nothing
 
 executeInstruction ADD = do
-  dev <- get
-  let val1:val2:rest = deviceValueStack dev
-      doOp (ValueStackItemInt i) (ValueStackItemInt i2) = return $ ValueStackItemInt $ i + i2
-      doOp (ValueStackItemFloat f) (ValueStackItemFloat f2) = return $ ValueStackItemFloat $ f + f2
-      doOp _ _ = error "Can't add different value types" 
-  subbed <- doOp val1 val2
-  put $ dev { deviceValueStack = subbed:rest }
+  modify $ \dev -> do
+    let val1:val2:rest = deviceValueStack dev
+        doOp (ValueStackItemInt i) (ValueStackItemInt i2) = ValueStackItemInt $ i + i2
+        doOp (ValueStackItemFloat f) (ValueStackItemFloat f2) = ValueStackItemFloat $ f + f2
+        doOp _ _ = error "Can't add different value types" 
+        subbed = doOp val1 val2
+      in dev { deviceValueStack = subbed:rest }
   incPC
   return Nothing
 
 executeInstruction XOR = do
-  dev <- get
-  let val1:val2:rest = deviceValueStack dev
-      doOp (ValueStackItemInt i) (ValueStackItemInt i2) = return $ ValueStackItemInt $ xor i i2
-      doOp _ _ = error "Can't xor different value types" 
-  subbed <- doOp val1 val2
-  put $ dev { deviceValueStack = subbed:rest }
+  modify $ \dev -> do
+    let val1:val2:rest = deviceValueStack dev
+        doOp (ValueStackItemInt i) (ValueStackItemInt i2) = ValueStackItemInt $ xor i i2
+        doOp _ _ = error "Can't xor different value types" 
+        subbed = doOp val1 val2
+      in dev { deviceValueStack = subbed:rest }
   incPC
   return Nothing
 
 executeInstruction MOD = do
-  dev <- get
-  let val1:val2:rest = deviceValueStack dev
-      doOp (ValueStackItemInt i) (ValueStackItemInt i2) = return $ ValueStackItemInt $ mod i i2
-      doOp _ _ = error "Can't mod different value types" 
-  subbed <- doOp val1 val2
-  put $ dev { deviceValueStack = subbed:rest }
+  modify $ \dev -> do
+    let val1:val2:rest = deviceValueStack dev
+        doOp (ValueStackItemInt i) (ValueStackItemInt i2) = ValueStackItemInt $ mod i i2
+        doOp _ _ = error "Can't mod different value types" 
+        subbed = doOp val1 val2
+      in dev { deviceValueStack = subbed:rest }
   incPC
   return Nothing
 
 executeInstruction POP = do
-  dev <- get
-  put $ dev { deviceValueStack = tail $ deviceValueStack dev }
+  modify $ \dev -> dev { deviceValueStack = tail $ deviceValueStack dev }
   incPC
   return Nothing
 
 executeInstruction Types.EQ = do
-  dev <- get
-  let val1:val2:rest = deviceValueStack dev
-      result = if val1 == val2
-                 then ValueStackItemInt 1
-                 else ValueStackItemInt 0
-  put $ dev { deviceValueStack = result:rest }
+  modify $ \dev ->
+    let val1:val2:rest = deviceValueStack dev
+        result = if val1 == val2
+                   then ValueStackItemInt 1
+                   else ValueStackItemInt 0
+      in dev { deviceValueStack = result:rest }
   incPC
   return Nothing
 
@@ -153,153 +150,145 @@ executeInstruction (JF offset) = do
       return Nothing
 
 executeInstruction (PUSHSTR i) = do
-  dev <- get
-  put $ dev { deviceValueStack = (ValueStackItemString $ fromIntegral i):deviceValueStack dev }
+  modify $ \dev -> dev { deviceValueStack = (ValueStackItemString $ fromIntegral i):deviceValueStack dev }
   incPC
   return Nothing
 
 executeInstruction PUSHUNIT = do
-  dev <- get
-  put $ dev { deviceValueStack = (ValueStackList []):deviceValueStack dev }
+  modify $ \dev -> dev { deviceValueStack = (ValueStackList []):deviceValueStack dev }
   incPC
   return Nothing
 
 executeInstruction PUSHTRUE = do
-  dev <- get
-  put $ dev { deviceValueStack = (ValueStackItemInt 1):deviceValueStack dev }
+  modify $ \dev -> dev { deviceValueStack = (ValueStackItemInt 1):deviceValueStack dev }
   incPC
   return Nothing
 
 executeInstruction PUSHFALSE = do
-  dev <- get
-  put $ dev { deviceValueStack = (ValueStackItemInt 0):deviceValueStack dev }
+  modify $ \dev -> dev { deviceValueStack = (ValueStackItemInt 0):deviceValueStack dev }
   incPC
   return Nothing
 
 executeInstruction (HALT) = do
-  dev <- get
-  put $ dev { devicePC = Nothing }
+  modify $ \dev -> dev { devicePC = Nothing }
   return Nothing
 
 executeInstruction (LIST c) = do
-  dev <- get
-  let (before,after) = splitAt (fromIntegral c) $ deviceValueStack dev
-  put $ dev { deviceValueStack = ((ValueStackList before):after) }
+  modify $ \dev ->
+    let (before,after) = splitAt (fromIntegral c) $ deviceValueStack dev
+      in dev { deviceValueStack = ((ValueStackList before):after) }
   incPC
   return Nothing
 
 executeInstruction LISTCAT = do
-  dev <- get
-  let (ValueStackList list1):(ValueStackList list2):rest = deviceValueStack dev
-  put $ dev { deviceValueStack = (ValueStackList $ list2 ++ list1):rest }
+  modify $ \dev ->
+    let (ValueStackList list1):(ValueStackList list2):rest = deviceValueStack dev
+      in dev { deviceValueStack = (ValueStackList $ list2 ++ list1):rest }
   incPC
   return Nothing
 
 executeInstruction (DECLARE i) = do
-  dev <- get
-  let currEnvIdx:_ = deviceSymbolsStack dev
-      currEnv = deviceSymbolsStacks dev ! currEnvIdx
-      newEnv = Map.insert i Nothing currEnv
-      newEnvStacks = deviceSymbolsStacks dev // [(currEnvIdx, newEnv)]
-  put $ dev { deviceSymbolsStacks = newEnvStacks }
+  modify $ \dev ->
+    let currEnvIdx:_ = deviceSymbolsStack dev
+        currEnv = deviceSymbolsStacks dev ! currEnvIdx
+        newEnv = Map.insert i Nothing currEnv
+        newEnvStacks = deviceSymbolsStacks dev // [(currEnvIdx, newEnv)]
+      in dev { deviceSymbolsStacks = newEnvStacks }
   incPC
   return Nothing
 
 executeInstruction (STORE i) = do
-  dev <- get
-  let val:rest = deviceValueStack dev
-      findSymbol [] = Nothing
-      findSymbol (symbols:rest) = case Map.lookup i (deviceSymbolsStacks dev ! symbols) of
-                                    val@(Just _) -> Just symbols
-                                    Nothing -> findSymbol rest
-      Just symbolIdx = findSymbol $ deviceSymbolsStack dev
-      symbolEnv = deviceSymbolsStacks dev ! symbolIdx
-      newEnv = Map.update (\_ -> Just $ Just val) i symbolEnv
-      newEnvStacks = deviceSymbolsStacks dev // [(symbolIdx, newEnv)]
-  put $ dev { deviceSymbolsStacks = newEnvStacks, deviceValueStack = rest }
+  modify $ \dev ->
+    let val:rest = deviceValueStack dev
+        findSymbol [] = Nothing
+        findSymbol (symbols:rest) = case Map.lookup i (deviceSymbolsStacks dev ! symbols) of
+                                      val@(Just _) -> Just symbols
+                                      Nothing -> findSymbol rest
+        Just symbolIdx = findSymbol $ deviceSymbolsStack dev
+        symbolEnv = deviceSymbolsStacks dev ! symbolIdx
+        newEnv = Map.update (\_ -> Just $ Just val) i symbolEnv
+        newEnvStacks = deviceSymbolsStacks dev // [(symbolIdx, newEnv)]
+      in dev { deviceSymbolsStacks = newEnvStacks, deviceValueStack = rest }
   incPC
   return Nothing
 
 executeInstruction (STORETOP i) = do
-  dev <- get
-  let val:rest = deviceValueStack dev
-      oldTop = deviceSymbolsStacks dev ! 0
-      newTop = Map.update (\_ -> Just $ Just val) i oldTop
-      newEnvStacks = deviceSymbolsStacks dev // [(0, newTop)]
-  put $ dev { deviceValueStack = rest, deviceSymbolsStacks = newEnvStacks }
+  modify $ \dev ->
+    let val:rest = deviceValueStack dev
+        oldTop = deviceSymbolsStacks dev ! 0
+        newTop = Map.update (\_ -> Just $ Just val) i oldTop
+        newEnvStacks = deviceSymbolsStacks dev // [(0, newTop)]
+      in dev { deviceValueStack = rest, deviceSymbolsStacks = newEnvStacks }
   incPC
   return Nothing
 
 executeInstruction (PUSHSY i) = do
-  dev <- get
-  let findSymbolValue [] = Nothing
-      findSymbolValue (symbols:rest) = case Map.lookup i (deviceSymbolsStacks dev ! symbols) of
-                                         val@(Just _) -> val
-                                         Nothing -> findSymbolValue rest
-      Just (Just val) = findSymbolValue $ deviceSymbolsStack dev
-  put $ dev { deviceValueStack = val:deviceValueStack dev }
+  modify $ \dev ->
+    let findSymbolValue [] = Nothing
+        findSymbolValue (symbols:rest) = case Map.lookup i (deviceSymbolsStacks dev ! symbols) of
+                                           val@(Just _) -> val
+                                           Nothing -> findSymbolValue rest
+        Just (Just val) = findSymbolValue $ deviceSymbolsStack dev
+      in dev { deviceValueStack = val:deviceValueStack dev }
   incPC
-  return $ Just $ Text.concat [(tableEntries $ programSymbolTable $ deviceProgram dev) !! fromIntegral i, " = ", Text.pack $ show val]
   return Nothing
 
 executeInstruction (PUSHCLOSURE i) = do
-  dev <- get
-  put $ dev { deviceValueStack = (ValueStackItemClosure i $ head $ deviceSymbolsStack dev):deviceValueStack dev }
+  modify $ \dev -> dev { deviceValueStack = (ValueStackItemClosure i $ head $ deviceSymbolsStack dev):deviceValueStack dev }
   incPC
   return Nothing
 
 executeInstruction NEWENV = do
-  dev <- get
-  let newStacks = V.snoc (deviceSymbolsStacks dev) Map.empty
-      newStackIdx = V.length newStacks - 1
-  put $ dev { deviceSymbolsStack = newStackIdx:deviceSymbolsStack dev, deviceSymbolsStacks = newStacks }
+  modify $ \dev ->
+    let newStacks = V.snoc (deviceSymbolsStacks dev) Map.empty
+        newStackIdx = V.length newStacks - 1
+      in dev { deviceSymbolsStack = newStackIdx:deviceSymbolsStack dev, deviceSymbolsStacks = newStacks }
   incPC
   return Nothing
 
 executeInstruction CALL = do
-  dev <- get
-  let (ValueStackItemClosure val symbols):rest = deviceValueStack dev
-      Just (currTape, currRow) = devicePC dev
-  put $ dev { devicePC = Just (fromIntegral val, 0)
-            , deviceValueStack = rest
-            , deviceSymbolsStack = symbols:deviceSymbolsStack dev
-            , deviceCallStack = (currTape, currRow + 1):deviceCallStack dev }
+  modify $ \dev ->
+    let (ValueStackItemClosure val symbols):rest = deviceValueStack dev
+        Just (currTape, currRow) = devicePC dev
+      in dev { devicePC = Just (fromIntegral val, 0)
+             , deviceValueStack = rest
+             , deviceSymbolsStack = symbols:deviceSymbolsStack dev
+             , deviceCallStack = (currTape, currRow + 1):deviceCallStack dev }
   return Nothing
 
 executeInstruction RET = do
-  dev <- get
-  let newPc:callStack = deviceCallStack dev
-  put $ dev { devicePC = Just newPc, deviceCallStack = callStack, deviceSymbolsStack = tail $ deviceSymbolsStack dev }
+  modify $ \dev ->
+    let newPc:callStack = deviceCallStack dev
+      in dev { devicePC = Just newPc, deviceCallStack = callStack, deviceSymbolsStack = tail $ deviceSymbolsStack dev }
   return Nothing
 
 executeInstruction DEPARTENV = do
-  dev <- get
-  put $ dev { deviceSymbolsStack = tail $ deviceSymbolsStack dev }
+  modify $ \dev -> dev { deviceSymbolsStack = tail $ deviceSymbolsStack dev }
   incPC
   return Nothing
 
 executeInstruction (JMP i) = do
-  dev <- get
-  let Just (tape, row) = devicePC dev
-      findInstruction idx ((at, _):rest) = if at == i
-                                           then idx
-                                           else findInstruction (idx + 1) rest
-      currProgram = snd $ (tapesData $ programCode $ deviceProgram dev) !! tape
-      targetIdx = findInstruction 0 currProgram
-  put $ dev { devicePC = Just (tape, targetIdx) }
+  modify $ \dev ->
+    let Just (tape, row) = devicePC dev
+        findInstruction idx ((at, _):rest) = if at == i
+                                             then idx
+                                             else findInstruction (idx + 1) rest
+        currProgram = snd $ (tapesData $ programCode $ deviceProgram dev) !! tape
+        targetIdx = findInstruction 0 currProgram
+      in dev { devicePC = Just (tape, targetIdx) }
   return Nothing
 
 executeInstruction HEAD = do
-  dev <- get
-  let ValueStackList (l1:_):rest = deviceValueStack dev
-  put $ dev { deviceValueStack = (l1:rest) }
+  modify $ \dev ->
+    let ValueStackList (l1:_):rest = deviceValueStack dev
+      in dev { deviceValueStack = (l1:rest) }
   incPC
   return Nothing
 
 executeInstruction TAIL = do
-  dev <- get
-  let ValueStackList (_:tail):rest = deviceValueStack dev
-  put $ dev { deviceValueStack = ((ValueStackList tail):rest) }
+  modify $ \dev ->
+    let ValueStackList (_:tail):rest = deviceValueStack dev
+      in dev { deviceValueStack = ((ValueStackList tail):rest) }
   incPC
   return Nothing
 

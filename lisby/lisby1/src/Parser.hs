@@ -106,7 +106,7 @@ parseOp = do
     45 -> return NEWENV
 
     46 -> return DEPARTENV
-    _ -> return HALT
+    _ -> error "Invalid program"
 
   return opcode'
 
