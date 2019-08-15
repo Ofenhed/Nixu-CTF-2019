@@ -139,6 +139,7 @@ executeInstruction (JT offset) = do
     else do
       incPC
       return Nothing
+
 executeInstruction (JF offset) = do
   dev <- get
   let val:rest = deviceValueStack dev
@@ -169,7 +170,7 @@ executeInstruction PUSHFALSE = do
   incPC
   return Nothing
 
-executeInstruction (HALT) = do
+executeInstruction HALT = do
   modify $ \dev -> dev { devicePC = Nothing }
   return Nothing
 
